@@ -1,0 +1,92 @@
+name: OpenStreetMap-Standorte aktualisieren
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+
+concurrency:
+  group: lss-osm-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Repository abrufen
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install -r requirements.txt
+
+      - name: Projekt testen
+        run: |
+          python -m unittest discover -s tests -v
+
+      - name: OSM-Daten Niedersachsen herunterladen
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _work
+          URL='https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf'
+          curl --fail --location --retry 3 --retry-delay 10 \
+            --connect-timeout 30 --max-time 3600 \
+            "$URL" --output _work/source.osm.pbf
+          test -s _work/source.osm.pbf
+
+      - name: Echte Standorte extrahieren
+        run: |
+          python tools/extract_osm.py \
+            --input _work/source.osm.pbf \
+            --output _work/standorte.jsonl
+
+      - name: JSON-Kacheln erzeugen
+        run: |
+          python tools/build_tiles.py \
+            --input _work/standorte.jsonl \
+            --output public
+
+      - name: Datenbestand prüfen
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('public/manifest.json').read_text(encoding='utf-8'))
+          count = data.get('count', 0)
+          tiles = len(data.get('tiles', {}))
+          assert count >= 100 and tiles > 0, f'Zu wenige OSM-Standorte: {count}, Kacheln: {tiles}'
+          print(f'Export erfolgreich: {count} Standorte in {tiles} Kacheln')
+          PY
+
+      - name: Pages vorbereiten
+        uses: actions/configure-pages@v5
+
+      - name: Daten für Pages hochladen
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v4
