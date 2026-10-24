@@ -61,6 +61,7 @@ class OsmFireStationIntegration(unittest.TestCase):
             tiles = root / "tiles-output"
             manifest = build([result], tiles)
             self.assertEqual(manifest["count"], 3)
+            self.assertEqual(manifest["countsByCategory"]["fire"], 3)
             nearby_key = key(53.73923, 8.91587)
             near_tile = json.loads((tiles / "tiles" / f"{nearby_key}.json").read_text(encoding="utf-8"))
             self.assertEqual(sum(x["id"] == "node/1" for x in near_tile), 1)
