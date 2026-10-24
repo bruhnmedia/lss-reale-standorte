@@ -11,6 +11,9 @@ class ExtractorTest(unittest.TestCase):
     def test_classification(self):
         examples = [
             ({'amenity': 'fire_station'}, 'fire'),
+            ({'building': 'fire_station', 'name': 'Freiwillige Feuerwehr'}, 'fire'),
+            ({'emergency': 'fire_station'}, 'fire'),
+            ({'building': 'yes', 'name': 'Feuerwehr Fanartikel'}, None),
             ({'amenity': 'police'}, 'police'),
             ({'healthcare': 'hospital'}, 'hospital'),
             ({'emergency': 'ambulance_station', 'operator': 'DRK Kreisverband'}, 'drk'),
