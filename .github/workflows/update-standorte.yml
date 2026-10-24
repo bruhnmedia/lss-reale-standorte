@@ -65,8 +65,10 @@ jobs:
           data = json.loads(Path('public/manifest.json').read_text(encoding='utf-8'))
           count = data.get('count', 0)
           tiles = len(data.get('tiles', {}))
+          fire = data.get('countsByCategory', {}).get('fire', 0)
           assert count >= 100 and tiles > 0, f'Zu wenige OSM-Standorte: {count}, Kacheln: {tiles}'
-          print(f'Export erfolgreich: {count} Standorte in {tiles} Kacheln')
+          assert fire >= 100, f'Zu wenige Feuerwehrstandorte: {fire} (mindestens 100 erwartet)'
+          print(f'Export erfolgreich: {count} Standorte, davon {fire} Feuerwehrstandorte, in {tiles} Kacheln')
           PY
 
       - name: Pages vorbereiten
