@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 
@@ -20,7 +21,10 @@ def classify(tags: dict[str, str]) -> str | None:
     def matches(pattern: str) -> bool:
         return bool(re.search(pattern, combined, flags=re.IGNORECASE))
 
-    if amenity == 'fire_station' or emergency == 'fire_station':
+    # Feuerwachen können in OSM auch ausschließlich als Gebäude erfasst sein.
+    # Sie dürfen beim Niedersachsen-Export nicht durchs Raster fallen.
+    if (amenity == 'fire_station' or emergency == 'fire_station'
+            or tags.get('building', '').lower() == 'fire_station'):
         return 'fire'
     if amenity == 'police':
         return 'police'
@@ -70,11 +74,77 @@ def make_properties(tags: dict[str, str], category: str, obj_id: str) -> dict:
         'mhd': 'Malteser-Standort', 'dlrg': 'DLRG-Standort', 'thw': 'THW-Standort',
         'berg': 'Bergwacht', 'wasser': 'Wasserwacht', 'rescue': 'Rettungsstandort',
     }
-    return {
+    result = {
         'id': obj_id, 'category': category,
         'name': (tags.get('name') or tags.get('official_name') or defaults[category])[:160],
         'operator': tags.get('operator', '')[:160], 'address': address[:180],
     }
+    # Intern für die Dublettenprüfung: Feuerwachen haben Vorrang vor Gebäuden.
+    if category == 'fire':
+        station = (tags.get('amenity', '').lower() == 'fire_station'
+                   or tags.get('emergency', '').lower() == 'fire_station')
+        result['_fire_source'] = 'station' if station else 'building'
+    return result
+
+
+def deduplicate_fire_buildings(records: list[dict], max_distance_m: float = 100.0) -> tuple[list[dict], int]:
+    """Gebäude an bereits erfassten Feuerwehrstandorten nicht doppelt ausgeben.
+
+    Einzeln erfasste Gebäude bleiben erhalten. Eigenständige explizit
+    getaggte Feuerwehrstandorte (amenity/emergency) bleiben immer erhalten.
+    Der Abstand ist bewusst klein und gilt nur für Gebäude-Einträge.
+    """
+    cell_size = 0.002  # ungefähr 220 m Breite in Nord-Süd-Richtung
+    stations = [r for r in records if r.get('category') == 'fire']
+    # Qualifizierte Feuerwehrstandorte zuerst, dann benannte Gebäude.
+    stations.sort(key=lambda r: (
+        r.get('_fire_source') != 'station',
+        r.get('name', '') == 'Feuerwehr',
+        r['id'],
+    ))
+    spatial: dict[tuple[int, int], list[dict]] = {}
+    discarded: set[str] = set()
+
+    def key(r: dict) -> tuple[int, int]:
+        return (math.floor(r['lat'] / cell_size), math.floor(r['lon'] / cell_size))
+
+    for item in stations:
+        y, x = key(item)
+        if item.get('_fire_source') == 'building':
+            duplicate = False
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    for existing in spatial.get((y + dy, x + dx), ()):
+                        lat_m = (item['lat'] - existing['lat']) * 111195
+                        lon_m = ((item['lon'] - existing['lon']) * 111195 *
+                                 math.cos(math.radians((item['lat'] + existing['lat']) / 2)))
+                        if lat_m * lat_m + lon_m * lon_m <= max_distance_m ** 2:
+                            # Bei zwei konkret benannten Gebäuden mit verschiedenen
+                            # Namen keine möglicherweise eigenständige Wache verstecken.
+                            if (existing.get('_fire_source') == 'building'
+                                    and item.get('name') not in ('', 'Feuerwehr')
+                                    and existing.get('name') not in ('', 'Feuerwehr')
+                                    and item['name'].casefold() != existing['name'].casefold()):
+                                continue
+                            duplicate = True
+                            break
+                    if duplicate:
+                        break
+                if duplicate:
+                    break
+            if duplicate:
+                discarded.add(item['id'])
+                continue
+        spatial.setdefault((y, x), []).append(item)
+
+    cleaned = []
+    for record in records:
+        if record['id'] in discarded:
+            continue
+        obj = record.copy()
+        obj.pop('_fire_source', None)
+        cleaned.append(obj)
+    return cleaned, len(discarded)
 
 
 def center(points: list[tuple[float, float]]) -> tuple[float, float] | None:
@@ -159,32 +229,35 @@ def extract(path: Path, output: Path) -> int:
     if locations_needed:
         Nodes().apply_file(str(path))
 
-    count = 0
+    positioned = []
+    for obj_id, feat in features.items():
+        if obj_id.startswith('way/'):
+            way_id = int(obj_id.split('/')[1])
+            pt = center([locations[n] for n in desired_way_nodes.get(way_id, ()) if n in locations])
+        elif obj_id.startswith('relation/'):
+            rel_id = int(obj_id.split('/')[1])
+            all_ids: list[int] = []
+            for typ, ref in relation_refs.get(rel_id, ()):
+                if typ == 'n':
+                    all_ids.append(ref)
+                elif typ == 'w':
+                    all_ids.extend(desired_way_nodes.get(ref, ()))
+            pt = center([locations[n] for n in all_ids if n in locations])
+        else:
+            pt = (feat['lat'], feat['lon'])
+        if not pt:
+            continue
+        feat['lat'] = round(pt[0], 7)
+        feat['lon'] = round(pt[1], 7)
+        positioned.append(feat)
+    unique, duplicate_count = deduplicate_fire_buildings(positioned)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open('w', encoding='utf-8') as f:
-        for obj_id, feat in features.items():
-            if obj_id.startswith('way/'):
-                way_id = int(obj_id.split('/')[1])
-                pt = center([locations[n] for n in desired_way_nodes.get(way_id, ()) if n in locations])
-            elif obj_id.startswith('relation/'):
-                rel_id = int(obj_id.split('/')[1])
-                all_ids: list[int] = []
-                for typ, ref in relation_refs.get(rel_id, ()):
-                    if typ == 'n':
-                        all_ids.append(ref)
-                    elif typ == 'w':
-                        all_ids.extend(desired_way_nodes.get(ref, ()))
-                pt = center([locations[n] for n in all_ids if n in locations])
-            else:
-                pt = (feat['lat'], feat['lon'])
-            if not pt:
-                continue
-            feat['lat'] = round(pt[0], 7)
-            feat['lon'] = round(pt[1], 7)
+        for feat in unique:
             f.write(json.dumps(feat, ensure_ascii=False, separators=(',', ':')) + '\n')
-            count += 1
-    print(f'{count} Standortobjekte: {output}', flush=True)
-    return count
+    print(f'{len(unique)} Standortobjekte: {output} '
+          f'({duplicate_count} überlappende Feuerwehrgebäude ausgeblendet)', flush=True)
+    return len(unique)
 
 
 if __name__ == '__main__':
