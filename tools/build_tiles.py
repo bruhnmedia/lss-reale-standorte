@@ -18,6 +18,7 @@ def key(lat: float, lon: float) -> str:
 
 def build(inputs: list[Path], output: Path) -> dict:
     buckets = defaultdict(list)
+    category_counts = defaultdict(int)
     ids: set[str] = set()
     for file in inputs:
         with file.open(encoding='utf-8') as stream:
@@ -34,11 +35,12 @@ def build(inputs: list[Path], output: Path) -> dict:
                     continue
                 ids.add(ident)
                 buckets[key(lat, lon)].append(item)
+                category_counts[item['category']] += 1
     folder = output / 'tiles'
     folder.mkdir(parents=True, exist_ok=True)
     manifest = {'format': 'lss-osm-tiles-v1', 'generatedAt': datetime.now(timezone.utc).isoformat(timespec='seconds'),
                 'tileSizeDegrees': TILE_SIZE, 'source': '© OpenStreetMap-Mitwirkende / Geofabrik (ODbL)',
-                'count': len(ids), 'tiles': {}}
+                'count': len(ids), 'countsByCategory': dict(sorted(category_counts.items())), 'tiles': {}}
     for tile_key, records in sorted(buckets.items()):
         records.sort(key=lambda r: (r['category'], r['name'], r['id']))
         (folder / f'{tile_key}.json').write_text(json.dumps(records, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
