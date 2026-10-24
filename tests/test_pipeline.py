@@ -89,6 +89,7 @@ class ExtractorTest(unittest.TestCase):
             source.write_text(''.join(json.dumps(x) + '\n' for x in records), encoding='utf-8')
             result = build([source], root / 'public')
             self.assertEqual(result['count'], 2)
+            self.assertEqual(result['countsByCategory'], {'fire': 1, 'hospital': 1})
             tile = key(53.535, 8.664)
             self.assertEqual(result['tiles'][tile], 2)
             self.assertEqual(len(json.loads((root / 'public' / 'tiles' / f'{tile}.json').read_text())), 2)
