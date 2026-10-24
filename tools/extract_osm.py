@@ -87,7 +87,6 @@ def make_properties(tags: dict[str, str], category: str, obj_id: str) -> dict:
     return result
 
 
-
 def deduplicate_fire_buildings(records: list[dict], max_distance_m: float = 100.0) -> tuple[list[dict], int]:
     """Gebäude an bereits erfassten Feuerwehrstandorten nicht doppelt ausgeben.
 
@@ -232,25 +231,25 @@ def extract(path: Path, output: Path) -> int:
 
     positioned = []
     for obj_id, feat in features.items():
-            if obj_id.startswith('way/'):
-                way_id = int(obj_id.split('/')[1])
-                pt = center([locations[n] for n in desired_way_nodes.get(way_id, ()) if n in locations])
-            elif obj_id.startswith('relation/'):
-                rel_id = int(obj_id.split('/')[1])
-                all_ids: list[int] = []
-                for typ, ref in relation_refs.get(rel_id, ()):
-                    if typ == 'n':
-                        all_ids.append(ref)
-                    elif typ == 'w':
-                        all_ids.extend(desired_way_nodes.get(ref, ()))
-                pt = center([locations[n] for n in all_ids if n in locations])
-            else:
-                pt = (feat['lat'], feat['lon'])
-            if not pt:
-                continue
-            feat['lat'] = round(pt[0], 7)
-            feat['lon'] = round(pt[1], 7)
-            positioned.append(feat)
+        if obj_id.startswith('way/'):
+            way_id = int(obj_id.split('/')[1])
+            pt = center([locations[n] for n in desired_way_nodes.get(way_id, ()) if n in locations])
+        elif obj_id.startswith('relation/'):
+            rel_id = int(obj_id.split('/')[1])
+            all_ids: list[int] = []
+            for typ, ref in relation_refs.get(rel_id, ()):
+                if typ == 'n':
+                    all_ids.append(ref)
+                elif typ == 'w':
+                    all_ids.extend(desired_way_nodes.get(ref, ()))
+            pt = center([locations[n] for n in all_ids if n in locations])
+        else:
+            pt = (feat['lat'], feat['lon'])
+        if not pt:
+            continue
+        feat['lat'] = round(pt[0], 7)
+        feat['lon'] = round(pt[1], 7)
+        positioned.append(feat)
     unique, duplicate_count = deduplicate_fire_buildings(positioned)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open('w', encoding='utf-8') as f:
