@@ -20,7 +20,10 @@ def classify(tags: dict[str, str]) -> str | None:
     def matches(pattern: str) -> bool:
         return bool(re.search(pattern, combined, flags=re.IGNORECASE))
 
-    if amenity == 'fire_station' or emergency == 'fire_station':
+    # Feuerwachen können in OSM auch ausschließlich als Gebäude erfasst sein.
+    # Sie dürfen beim Niedersachsen-Export nicht durchs Raster fallen.
+    if (amenity == 'fire_station' or emergency == 'fire_station'
+            or tags.get('building', '').lower() == 'fire_station'):
         return 'fire'
     if amenity == 'police':
         return 'police'
