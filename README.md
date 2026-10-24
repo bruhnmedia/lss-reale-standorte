@@ -1,4 +1,4 @@
-# BRUHN MEDIA · Reale BOS-Standorte Niedersachsen
+# BRUHN MEDIA | Reale BOS-Standorte Niedersachsen
 
 **Standortdaten für die BRUHN MEDIA LSS Tools.**
 
